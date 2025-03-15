@@ -1,5 +1,5 @@
 # Base image
-FROM python:3.12-slim
+FROM python:latest
 
 # Set working directory
 WORKDIR /app
