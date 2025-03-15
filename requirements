@@ -1,0 +1,6 @@
+flask
+flask-sqlalchemy
+psycorg2-binary
+pyjwt
+passlib
+redis
