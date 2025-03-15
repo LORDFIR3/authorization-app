@@ -1,5 +1,6 @@
 from env import SECRET_KEY, APP_URI
 from flask import Flask, request, jsonify, redirect
+from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import jwt
 import datetime
@@ -9,6 +10,7 @@ import uuid  # For unique token identifiers
 import redis  # For token blacklisting
 
 app = Flask(__name__)
+CORS(app)
 
 # Database Configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')
