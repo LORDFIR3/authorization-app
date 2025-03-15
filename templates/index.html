@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+        }
+        input, button {
+            width: 100%;
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            background: blue;
+            color: white;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Login</h2>
+        <input type="text" id="login" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+        <button onclick="login()">Login</button>
+        <p id="message"></p>
+        <button onclick="accessProtected()">Access Protected Resource</button>
+    </div>
+
+    <script>
+        async function login() {
+            const login = document.getElementById("login").value;
+            const password = document.getElementById("password").value;
+            const response = await fetch("http://localhost:5000/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ login, password })
+            });
+            const data = await response.json();
+            if (response.ok) {
+                localStorage.setItem("token", data.token);
+                document.getElementById("message").textContent = "Login successful!";
+            } else {
+                document.getElementById("message").textContent = "Invalid credentials";
+            }
+        }
+
+        async function accessProtected() {
+            const token = localStorage.getItem("token");
+            if (!token) {
+                document.getElementById("message").textContent = "Please login first!";
+                return;
+            }
+            const response = await fetch("http://localhost:5000/protected", {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (response.redirected) {
+                window.location.href = response.url;
+            } else {
+                const data = await response.json();
+                document.getElementById("message").textContent = data.error || "Access granted!";
+            }
+        }
+    </script>
+</body>
+</html>
