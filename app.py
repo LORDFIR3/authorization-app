@@ -5,6 +5,7 @@ from flask_sqlalchemy import SQLAlchemy
 import jwt
 import datetime
 import hashlib
+import sqlalchemy
 import os
 import uuid  # For unique token identifiers
 import redis  # For token blacklisting
@@ -13,7 +14,8 @@ app = Flask(__name__)
 CORS(app)
 
 # Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')
+app.config['SQLALCHEMY_DATABASE_URI'] = \
+    'postgresql://myadmin:MyStrongPassword123@auth-postgres-server.postgres.database.azure.com:5432/credentials'
 db = SQLAlchemy(app)
 
 # Redis Configuration (for token blacklisting)
@@ -23,14 +25,21 @@ redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379,
 # User Model
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    login = db.Column(db.String(80), unique=True, nullable=False)
+    login = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
 
 
 # JWT Secret Key
 SECRET_KEY = SECRET_KEY
 
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
+
+def verify_password(provided_password, stored_hash):
+    return hash_password(provided_password) == stored_hash
+
+# Default route
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -39,8 +48,24 @@ def index():
 # Login Route
 @app.route('/login', methods=['POST'])
 def login():
+
+    with db.engine.connect() as connection:
+        result = connection.execute(sqlalchemy.text("SELECT login FROM users"))
+        users = []
+        for row in result:
+            users.append(f"👤 User in DB: {row[0]}")
+
     data = request.json
-    user = User.query.filter_by(login=data['login']).first()
+    if not data or 'login' not in data or 'password' not in data:
+        return jsonify({'error': 'Missing login or password'}), 400
+
+    login = data['login'].strip().lower()
+    password = data['password']
+
+    user = User.query.filter(sqlalchemy.func.lower(User.login) == login).first()
+    print("🗂️ Retrieved User:", user.__dict__ if user else "User not found")
+    if not user or not verify_password(password, user.password_hash):
+        return jsonify({'error': 'Invalid credentials'}), 401
 
     if user and hashlib.sha256(data['password'].encode()).hexdigest() == user.password_hash:
         jti = str(uuid.uuid4())  # Unique token identifier
@@ -55,7 +80,7 @@ def login():
         redis_client.set(jti, 'true', ex=300)  # 5-minute expiry
 
         return jsonify({'token': token})
-    return jsonify({'error': 'Invalid credentials'}), 401
+    return jsonify({'error': f'Invalid credentials {data}'}), 401
 
 
 # Protected Resource Route
@@ -83,4 +108,4 @@ def protected():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()  # Ensures tables are created
-    app.run(host='0.0.0.0',port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)
