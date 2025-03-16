@@ -1,10 +1,12 @@
-from env import SECRET_KEY, APP_URI
-from flask import Flask, request, jsonify, redirect
+import sys
+
+from env import SECRET_KEY, APP_URI, DB_CONFIG
+from flask import Flask, request, jsonify, redirect, render_template
 from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
+import psycopg2
 import jwt
 import datetime
-from passlib.hash import bcrypt
+import hashlib
 import os
 import uuid  # For unique token identifiers
 import redis  # For token blacklisting
@@ -12,45 +14,68 @@ import redis  # For token blacklisting
 app = Flask(__name__)
 CORS(app)
 
-# Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('SQLALCHEMY_DATABASE_URI')
-db = SQLAlchemy(app)
-
 # Redis Configuration (for token blacklisting)
 redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0)
 
-
-# User Model
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    login = db.Column(db.String(80), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False)
-
-
 # JWT Secret Key
 SECRET_KEY = SECRET_KEY
+def get_db_connection():
+    return psycopg2.connect(**DB_CONFIG)
+
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def verify_password(provided_password, stored_hash):
+    return hash_password(provided_password) == stored_hash
+
+# Default route
+@app.route('/')
+def index():
+    return render_template('index.html')
 
 
 # Login Route
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
-    user = User.query.filter_by(login=data['login']).first()
+    try:
+        # Validate request JSON
+        data = request.get_json()
+        if not data or "login" not in data or "password" not in data:
+            return jsonify({"error": "Missing login or password"}), 400
 
-    if user and bcrypt.verify(data['password'], user.password_hash):
+        login = data['login'].strip().lower()
+        password = data['password']
+
+        # Connect to DB and retrieve user
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, password_hash FROM users WHERE LOWER(login) = %s", (login,))
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not user or not verify_password(password, user[1]):
+            return jsonify({"error": "Invalid credentials"}), 401
+
+        # Generate JWT token
+        user_id = user[0]
         jti = str(uuid.uuid4())  # Unique token identifier
         token = jwt.encode({
-            'id': user.id,
-            'login': user.login,
+            'id': user_id,
+            'login': login,
             'exp': datetime.datetime.now() + datetime.timedelta(minutes=5),
             'jti': jti
         }, SECRET_KEY, algorithm='HS256')
 
-        # Store JTI in Redis with expiry
-        redis_client.set(jti, 'true', ex=300)  # 5-minute expiry
+        # Store JTI in Redis for blacklisting (5-minute expiry)
+        redis_client.setex(jti, 300, "true")
 
-        return jsonify({'token': token})
-    return jsonify({'error': 'Invalid credentials'}), 401
+        return jsonify({"token": token})
+
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 
 # Protected Resource Route
@@ -76,6 +101,4 @@ def protected():
 
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()  # Ensures tables are created
-    app.run(host='0.0.0.0',port=5000)
+    app.run(host='0.0.0.0', port=5000, debug=True)
