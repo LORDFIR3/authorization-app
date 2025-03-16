@@ -1,11 +1,12 @@
-from env import SECRET_KEY, APP_URI
+import sys
+
+from env import SECRET_KEY, APP_URI, DB_CONFIG
 from flask import Flask, request, jsonify, redirect, render_template
 from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
+import psycopg2
 import jwt
 import datetime
 import hashlib
-import sqlalchemy
 import os
 import uuid  # For unique token identifiers
 import redis  # For token blacklisting
@@ -13,24 +14,14 @@ import redis  # For token blacklisting
 app = Flask(__name__)
 CORS(app)
 
-# Database Configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = \
-    'postgresql://myadmin:MyStrongPassword123@auth-postgres-server.postgres.database.azure.com:5432/credentials'
-db = SQLAlchemy(app)
-
 # Redis Configuration (for token blacklisting)
 redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379, db=0)
 
-
-# User Model
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    login = db.Column(db.String(100), unique=True, nullable=False)
-    password_hash = db.Column(db.String(200), nullable=False)
-
-
 # JWT Secret Key
 SECRET_KEY = SECRET_KEY
+def get_db_connection():
+    return psycopg2.connect(**DB_CONFIG)
+
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -48,39 +39,43 @@ def index():
 # Login Route
 @app.route('/login', methods=['POST'])
 def login():
+    try:
+        # Validate request JSON
+        data = request.get_json()
+        if not data or "login" not in data or "password" not in data:
+            return jsonify({"error": "Missing login or password"}), 400
 
-    with db.engine.connect() as connection:
-        result = connection.execute(sqlalchemy.text("SELECT login FROM users"))
-        users = []
-        for row in result:
-            users.append(f"👤 User in DB: {row[0]}")
+        login = data['login'].strip().lower()
+        password = data['password']
 
-    data = request.json
-    if not data or 'login' not in data or 'password' not in data:
-        return jsonify({'error': 'Missing login or password'}), 400
+        # Connect to DB and retrieve user
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT id, password_hash FROM users WHERE LOWER(login) = %s", (login,))
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
 
-    login = data['login'].strip().lower()
-    password = data['password']
+        if not user or not verify_password(password, user[1]):
+            return jsonify({"error": "Invalid credentials"}), 401
 
-    user = User.query.filter(sqlalchemy.func.lower(User.login) == login).first()
-    print("🗂️ Retrieved User:", user.__dict__ if user else "User not found")
-    if not user or not verify_password(password, user.password_hash):
-        return jsonify({'error': 'Invalid credentials'}), 401
-
-    if user and hashlib.sha256(data['password'].encode()).hexdigest() == user.password_hash:
+        # Generate JWT token
+        user_id = user[0]
         jti = str(uuid.uuid4())  # Unique token identifier
         token = jwt.encode({
-            'id': user.id,
-            'login': user.login,
+            'id': user_id,
+            'login': login,
             'exp': datetime.datetime.now() + datetime.timedelta(minutes=5),
             'jti': jti
         }, SECRET_KEY, algorithm='HS256')
 
-        # Store JTI in Redis with expiry
-        redis_client.set(jti, 'true', ex=300)  # 5-minute expiry
+        # Store JTI in Redis for blacklisting (5-minute expiry)
+        redis_client.setex(jti, 300, "true")
 
-        return jsonify({'token': token})
-    return jsonify({'error': f'Invalid credentials {data}'}), 401
+        return jsonify({"token": token})
+
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 
 # Protected Resource Route
@@ -106,6 +101,4 @@ def protected():
 
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()  # Ensures tables are created
     app.run(host='0.0.0.0', port=5000, debug=True)
