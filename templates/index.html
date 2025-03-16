@@ -19,6 +19,7 @@
             padding: 20px;
             border-radius: 10px;
             box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
         }
         input, button {
             width: 100%;
@@ -39,44 +40,68 @@
         <h2>Login</h2>
         <input type="text" id="login" placeholder="Username">
         <input type="password" id="password" placeholder="Password">
-        <button onclick="login()">Login</button>
+        <button id="loginBtn">Login</button>
         <p id="message"></p>
-        <button onclick="accessProtected()">Access Protected Resource</button>
+        <button id="protectedBtn">Access Protected Resource</button>
     </div>
 
     <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            document.getElementById("loginBtn").addEventListener("click", login);
+            document.getElementById("protectedBtn").addEventListener("click", accessProtected);
+        });
+
         async function login() {
             const login = document.getElementById("login").value;
             const password = document.getElementById("password").value;
-            const response = await fetch("https://jwtauthapp.azurewebsites.net/", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ login, password })
-            });
-            const data = await response.json();
-            if (response.ok) {
-                localStorage.setItem("token", data.token);
-                document.getElementById("message").textContent = "Login successful!";
-            } else {
-                document.getElementById("message").textContent = "Invalid credentials";
+
+            if (!login || !password) {
+                document.getElementById("message").textContent = "Please fill in both fields!";
+                return;
+            }
+
+            try {
+                const response = await fetch("https://jwtauthapp.azurewebsites.net/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ login, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    localStorage.setItem("token", data.token);
+                    document.getElementById("message").textContent = "Login successful!";
+                } else {
+                    document.getElementById("message").textContent = data.error || "Invalid credentials";
+                }
+            } catch (error) {
+                document.getElementById("message").textContent = "Network error. Try again!";
             }
         }
 
         async function accessProtected() {
             const token = localStorage.getItem("token");
+
             if (!token) {
                 document.getElementById("message").textContent = "Please login first!";
                 return;
             }
-            const response = await fetch("https://jwtauthapp.azurewebsites.net/protected", {
-                method: "GET",
-                headers: { "Authorization": `Bearer ${token}` }
-            });
-            if (response.redirected) {
-                window.location.href = response.url;
-            } else {
-                const data = await response.json();
-                document.getElementById("message").textContent = data.error || "Access granted!";
+
+            try {
+                const response = await fetch("https://jwtauthapp.azurewebsites.net/protected", {
+                    method: "GET",
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+
+                if (response.redirected) {
+                    window.location.href = response.url;
+                } else {
+                    const data = await response.json();
+                    document.getElementById("message").textContent = data.error || "Access granted!";
+                }
+            } catch (error) {
+                document.getElementById("message").textContent = "Network error. Try again!";
             }
         }
     </script>

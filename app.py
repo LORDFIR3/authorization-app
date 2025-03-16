@@ -1,10 +1,10 @@
 from env import SECRET_KEY, APP_URI
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify, redirect, render_template
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 import jwt
 import datetime
-from passlib.hash import bcrypt
+import hashlib
 import os
 import uuid  # For unique token identifiers
 import redis  # For token blacklisting
@@ -31,13 +31,18 @@ class User(db.Model):
 SECRET_KEY = SECRET_KEY
 
 
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
 # Login Route
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
     user = User.query.filter_by(login=data['login']).first()
 
-    if user and bcrypt.verify(data['password'], user.password_hash):
+    if user and hashlib.sha256(data['password'].encode()).hexdigest() == user.password_hash:
         jti = str(uuid.uuid4())  # Unique token identifier
         token = jwt.encode({
             'id': user.id,
