@@ -64,7 +64,6 @@ def login():
         jti = str(uuid.uuid4())  # Unique token identifier
         token = jwt.encode({
             'id': user_id,
-            'login': login,
             'exp': datetime.datetime.now() + datetime.timedelta(minutes=5),
             'jti': jti
         }, SECRET_KEY, algorithm='HS256')
